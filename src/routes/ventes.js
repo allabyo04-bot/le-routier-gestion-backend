@@ -193,7 +193,7 @@ router.post("/:id/reglement", requireAuth, async (req, res) => {
       where: { id: vente.id },
       data: {
         soldeDu: nouveauSolde,
-        monnaieRendue: vente.monnaieRendue + excedent,
+        monnaieRendue: (vente.monnaieRendue || 0) + excedent,
       },
       include: { paiements: true, client: true },
     });
