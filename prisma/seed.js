@@ -1,50 +1,46 @@
-// Ce script crée les 3 rôles par défaut et un premier compte Administrateur,
-// pour que tu puisses te connecter dès le premier déploiement.
-// Lancer avec : npm run seed
-
-require("dotenv").config();
-const { PrismaClient } = require("@prisma/client");
+// Initialise le dépôt principal et le compte administrateur.
+// Usage : node prisma/seed.js
 const bcrypt = require("bcryptjs");
-
+const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
 async function main() {
-  const rolesExistants = await prisma.role.count();
-  if (rolesExistants > 0) {
-    console.log("Des rôles existent déjà — le seed ne fait rien pour éviter d'écraser tes données.");
-    return;
-  }
+  const depot = await prisma.depot.upsert({
+    where: { nom: "DEPOT PRINCIPAL" },
+    update: {},
+    create: { nom: "DEPOT PRINCIPAL", adresse: "Agla Les Pylônes, Cotonou" },
+  });
 
-  const admin = await prisma.role.create({
-    data: {
-      nom: "Administrateur", systeme: true,
-      permissions: { ventes: true, stock: true, clients: true, rapports: true, utilisateurs: true, configuration: true },
-    },
-  });
-  await prisma.role.create({
-    data: {
-      nom: "Gérant", systeme: false,
-      permissions: { ventes: true, stock: true, clients: true, rapports: true, utilisateurs: false, configuration: false },
-    },
-  });
-  await prisma.role.create({
-    data: {
-      nom: "Vendeur", systeme: false,
-      permissions: { ventes: true, stock: false, clients: true, rapports: false, utilisateurs: false, configuration: false },
+  const motDePasseHash = await bcrypt.hash("routier2026", 10);
+  await prisma.user.upsert({
+    where: { identifiant: "admin" },
+    update: {},
+    create: {
+      nom: "DOSSA Cocou Joscio",
+      identifiant: "admin",
+      motDePasseHash,
+      role: "administrateur",
+      depotParDefautId: depot.id,
     },
   });
 
-  // Compte admin par défaut — À CHANGER IMMÉDIATEMENT après la première connexion
-  const pinHash = await bcrypt.hash("1234", 10);
-  await prisma.user.create({
-    data: {
-      nom: "Soumahoro", prenom: "Djenie", login: "djenie", pinHash,
-      roleId: admin.id, boutique: "Angré", actif: true,
+  await prisma.client.upsert({
+    where: { telephone: "___client_comptoir___" },
+    update: {},
+    create: {
+      raisonSociale: "Client comptoir",
+      estClientComptoir: true,
+      telephone: "___client_comptoir___",
     },
   });
 
-  console.log("Seed terminé : 3 rôles créés + compte admin 'djenie' / PIN '1234'.");
-  console.log("IMPORTANT : change ce PIN dès la première connexion.");
+  console.log("Seed terminé : dépôt principal, compte admin/routier2026, client comptoir créés.");
+  console.log("⚠️  Change ce mot de passe dès la première connexion (Mon compte → changer le mot de passe).");
 }
 
-main().finally(() => prisma.$disconnect());
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(() => prisma.$disconnect());

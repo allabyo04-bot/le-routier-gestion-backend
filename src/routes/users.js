@@ -1,59 +1,56 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const prisma = require("../prisma");
-const { requireAuth, requirePermission, requireCodeConfirmation } = require("../middleware/auth");
+const { requireAuth, requireAdmin } = require("../middleware/auth");
 
 const router = express.Router();
-router.use(requireAuth, requirePermission("utilisateurs"));
 
-router.get("/", async (req, res) => {
-  const users = await prisma.user.findMany({ include: { role: true }, orderBy: { createdAt: "asc" } });
-  res.json(users.map(({ pinHash, reponseSecreteHash, ...u }) => u)); // on ne renvoie jamais les hash
+router.get("/", requireAuth, requireAdmin, async (req, res) => {
+  const users = await prisma.user.findMany({
+    select: { id: true, nom: true, identifiant: true, role: true, actif: true, depotParDefautId: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
+  res.json(users);
 });
 
-router.post("/", requireCodeConfirmation, async (req, res) => {
-  const { nom, prenom, login, pin, roleId, boutique, telephone, questionSecrete, reponseSecrete } = req.body;
-  if (!nom || !prenom || !login || !/^\d{4,6}$/.test(pin || "")) {
-    return res.status(400).json({ error: "Nom, prénom, identifiant et PIN (4 à 6 chiffres) sont obligatoires." });
+// POST /api/users  { nom, identifiant, motDePasse, role, depotParDefautId }
+router.post("/", requireAuth, requireAdmin, async (req, res) => {
+  const { nom, identifiant, motDePasse, role, depotParDefautId } = req.body || {};
+  if (!nom || !identifiant || !motDePasse || !role) {
+    return res.status(400).json({ error: "Nom, identifiant, mot de passe et rôle requis." });
   }
-  const existant = await prisma.user.findUnique({ where: { login } });
-  if (existant) return res.status(409).json({ error: "Cet identifiant est déjà utilisé." });
-  if (telephone?.trim()) {
-    const conflit = await prisma.user.findUnique({ where: { telephone: telephone.trim() } });
-    if (conflit) return res.status(409).json({ error: "Ce numéro de téléphone est déjà utilisé par un autre employé." });
+  if (!["administrateur", "operateur"].includes(role)) {
+    return res.status(400).json({ error: "Rôle invalide (administrateur ou operateur)." });
   }
-
-  const pinHash = await bcrypt.hash(pin, 10);
-  const data = { nom, prenom, login, pinHash, roleId, boutique, actif: true, telephone: telephone?.trim() || null, questionSecrete: questionSecrete?.trim() || null };
-  if (reponseSecrete?.trim()) data.reponseSecreteHash = await bcrypt.hash(reponseSecrete.trim().toLowerCase(), 10);
-
-  const user = await prisma.user.create({ data });
-  const { pinHash: _, reponseSecreteHash: __, ...safe } = user;
-  res.status(201).json(safe);
+  const motDePasseHash = await bcrypt.hash(motDePasse, 10);
+  const user = await prisma.user.create({
+    data: { nom, identifiant, motDePasseHash, role, depotParDefautId: depotParDefautId || null },
+  });
+  res.status(201).json({ id: user.id, nom: user.nom, identifiant: user.identifiant, role: user.role });
 });
 
-router.put("/:id", requireCodeConfirmation, async (req, res) => {
-  const { nom, prenom, login, pin, roleId, boutique, actif, telephone, questionSecrete, reponseSecrete } = req.body;
-  if (login) {
-    const conflit = await prisma.user.findFirst({ where: { login, NOT: { id: req.params.id } } });
-    if (conflit) return res.status(409).json({ error: "Cet identifiant est déjà utilisé par un autre employé." });
-  }
-  if (telephone?.trim()) {
-    const conflit = await prisma.user.findFirst({ where: { telephone: telephone.trim(), NOT: { id: req.params.id } } });
-    if (conflit) return res.status(409).json({ error: "Ce numéro de téléphone est déjà utilisé par un autre employé." });
-  }
-  const data = { nom, prenom, login, roleId, boutique, actif, telephone: telephone?.trim() || null, questionSecrete: questionSecrete?.trim() || null };
-  if (pin) data.pinHash = await bcrypt.hash(pin, 10);
-  if (reponseSecrete?.trim()) data.reponseSecreteHash = await bcrypt.hash(reponseSecrete.trim().toLowerCase(), 10);
-
-  const user = await prisma.user.update({ where: { id: req.params.id }, data });
-  const { pinHash: _, reponseSecreteHash: __, ...safe } = user;
-  res.json(safe);
+router.put("/:id", requireAuth, requireAdmin, async (req, res) => {
+  const { nom, actif, depotParDefautId } = req.body || {};
+  const user = await prisma.user.update({
+    where: { id: req.params.id },
+    data: {
+      ...(nom != null ? { nom } : {}),
+      ...(actif != null ? { actif } : {}),
+      ...(depotParDefautId !== undefined ? { depotParDefautId } : {}),
+    },
+  });
+  res.json({ id: user.id, nom: user.nom, actif: user.actif });
 });
 
-router.delete("/:id", requireCodeConfirmation, async (req, res) => {
-  await prisma.user.delete({ where: { id: req.params.id } });
-  res.status(204).end();
+// Réinitialisation par l'administrateur (dépannage) — l'utilisateur peut ensuite la changer lui-même.
+router.post("/:id/reinitialiser-mot-de-passe", requireAuth, requireAdmin, async (req, res) => {
+  const { nouveauMotDePasse } = req.body || {};
+  if (!nouveauMotDePasse || nouveauMotDePasse.length < 4) {
+    return res.status(400).json({ error: "Nouveau mot de passe requis (4 caractères min)." });
+  }
+  const motDePasseHash = await bcrypt.hash(nouveauMotDePasse, 10);
+  await prisma.user.update({ where: { id: req.params.id }, data: { motDePasseHash } });
+  res.json({ ok: true });
 });
 
 module.exports = router;

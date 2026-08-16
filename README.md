@@ -1,59 +1,29 @@
-# Gestion Commerciale — Backend
+# LE ROUTIER — Gestion commerciale (backend)
 
-API pour la gestion commerciale (chaussures & sacs) — La Pointure Espagnole.
+Node/Express/Prisma/PostgreSQL. Premier lot de fonctionnalités : ventes, mise en attente,
+historique + annulation tracée, stock multi-dépôt, clients, dépenses/manquants/excédents,
+rapport journalier (CA net), utilisateurs (2 rôles : administrateur, opérateur), journal d'audit.
 
-## Démarrage en local
+À venir dans une prochaine passe : inventaire (aller-retour Excel), facturation normalisée DGI
+(le champ `typeFacture` est déjà prévu dans le schéma pour ne pas bloquer cette évolution).
 
-1. **Installer les dépendances**
-   ```
-   npm install
-   ```
+## Déploiement sur Railway
 
-2. **Créer le fichier `.env`**
-   Copie `.env.example` en `.env` et remplis `DATABASE_URL` (une base PostgreSQL locale,
-   ou directement l'URL fournie par Railway si tu préfères développer contre le cloud).
+1. Variables d'environnement à définir sur le service : `DATABASE_URL` (fournie automatiquement
+   si le service Postgres est dans le même projet Railway), `JWT_SECRET` (une longue chaîne
+   aléatoire).
+2. Railway installe les dépendances puis lance `npm start`, qui exécute `prisma migrate deploy`
+   avant de démarrer le serveur.
+3. Une fois déployé, lancer une seule fois `node prisma/seed.js` (via le terminal Railway du
+   service, onglet "Console") pour créer le dépôt principal et le compte administrateur
+   (`admin` / `routier2026` — à changer dès la première connexion).
 
-3. **Créer les tables dans la base**
-   ```
-   npx prisma migrate dev --name init
-   ```
-   Cette commande lit `prisma/schema.prisma` et crée toutes les tables correspondantes.
-
-4. **Créer les rôles + le premier compte administrateur**
-   ```
-   npm run seed
-   ```
-   Ça crée automatiquement :
-   - Les rôles Administrateur / Gérant / Vendeur
-   - Un compte `djenie` avec le PIN `1234` (rôle Administrateur)
-
-   **Change ce PIN dès la première connexion** — il n'est là que pour démarrer.
-
-5. **Lancer le serveur**
-   ```
-   npm run dev
-   ```
-   L'API tourne sur `http://localhost:4000`.
-
-## Tester que ça marche
+## Développement local
 
 ```
-curl -X POST http://localhost:4000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"login": "djenie", "pin": "1234"}'
+npm install
+cp .env.example .env   # renseigner DATABASE_URL
+npx prisma migrate dev --name init
+npm run seed
+npm run dev
 ```
-
-Tu dois recevoir un token. Toutes les autres routes (`/api/users`, `/api/articles`, `/api/clients`,
-`/api/ventes`...) demandent ce token dans l'en-tête :
-```
-Authorization: Bearer <le-token-reçu>
-```
-
-## Prochaine étape
-
-Une fois que ça fonctionne en local, on passe à :
-1. Créer le dépôt GitHub et y pousser ce code
-2. Créer le projet Railway, y ajouter une base PostgreSQL
-3. Configurer les variables d'environnement sur Railway
-4. Déployer → obtenir l'URL publique
-5. Adapter le frontend React pour appeler cette API au lieu du stockage de l'artifact
