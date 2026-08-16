@@ -96,8 +96,9 @@ model Vente {
   typeFacture     String   @default("NonNormalisee") // "NonNormalisee" | "Normalisee" (phase DGI, plus tard)
   total           Int      @default(0)
   remiseGlobale   Int      @default(0)
-  montantRecu     Int?     // somme remise par le client en caisse (facultatif : vente à crédit si absent)
-  monnaieRendue   Int?     // montantRecu - total, calculé et figé au moment de la vente
+  paiements       Paiement[]
+  monnaieRendue   Int      @default(0) // somme reçue au-delà du total, rendue au client
+  soldeDu         Int      @default(0) // reste à payer si vente à crédit (0 si payée intégralement)
   motifAnnulation String?
   annuleeParId    String?
   annuleePar      User?    @relation("ventesAnnulees", fields: [annuleeParId], references: [id])
@@ -120,6 +121,19 @@ model LigneVente {
   sousTotal         Int
   prixAchatUnitaire Int     // copié au moment de la vente, pour un calcul de marge historisé et fiable
   margeLigne        Int
+}
+
+// Un paiement associé à une vente. Une vente peut être réglée en plusieurs modes (espèces +
+// mobile money, par exemple), et/ou en plusieurs fois si elle a été vendue à crédit (viaReglement
+// distingue le paiement encaissé à la vente d'un règlement ultérieur d'une créance).
+model Paiement {
+  id           String   @id @default(cuid())
+  venteId      String
+  vente        Vente    @relation(fields: [venteId], references: [id])
+  mode         String   // libre : "Espèces", "Mobile Money", "Virement", "Chèque"... (extensible, saisi en caisse)
+  montant      Int
+  viaReglement Boolean  @default(false)
+  createdAt    DateTime @default(now())
 }
 
 // Vente mise de côté le temps que le client revienne — stock non impacté tant qu'elle n'est pas validée.

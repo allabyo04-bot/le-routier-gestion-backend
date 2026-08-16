@@ -26,6 +26,15 @@ router.post("/", requireAuth, requireAdmin, async (req, res) => {
   const user = await prisma.user.create({
     data: { nom, identifiant, motDePasseHash, role, depotParDefautId: depotParDefautId || null },
   });
+  await prisma.journalAudit.create({
+    data: {
+      utilisateurId: req.user.id,
+      action: "creation_utilisateur",
+      cibleType: "User",
+      cibleId: user.id,
+      details: `Compte ${identifiant} (${nom}) créé avec le rôle ${role}.`,
+    },
+  });
   res.status(201).json({ id: user.id, nom: user.nom, identifiant: user.identifiant, role: user.role });
 });
 
@@ -39,6 +48,17 @@ router.put("/:id", requireAuth, requireAdmin, async (req, res) => {
       ...(depotParDefautId !== undefined ? { depotParDefautId } : {}),
     },
   });
+  if (actif != null) {
+    await prisma.journalAudit.create({
+      data: {
+        utilisateurId: req.user.id,
+        action: actif ? "activation_utilisateur" : "desactivation_utilisateur",
+        cibleType: "User",
+        cibleId: user.id,
+        details: `Compte ${user.identifiant} (${user.nom}) ${actif ? "réactivé" : "désactivé"}.`,
+      },
+    });
+  }
   res.json({ id: user.id, nom: user.nom, actif: user.actif });
 });
 
@@ -49,7 +69,16 @@ router.post("/:id/reinitialiser-mot-de-passe", requireAuth, requireAdmin, async 
     return res.status(400).json({ error: "Nouveau mot de passe requis (4 caractères min)." });
   }
   const motDePasseHash = await bcrypt.hash(nouveauMotDePasse, 10);
-  await prisma.user.update({ where: { id: req.params.id }, data: { motDePasseHash } });
+  const cible = await prisma.user.update({ where: { id: req.params.id }, data: { motDePasseHash } });
+  await prisma.journalAudit.create({
+    data: {
+      utilisateurId: req.user.id,
+      action: "reinitialisation_mot_de_passe",
+      cibleType: "User",
+      cibleId: cible.id,
+      details: `Mot de passe de ${cible.identifiant} (${cible.nom}) réinitialisé par un administrateur.`,
+    },
+  });
   res.json({ ok: true });
 });
 

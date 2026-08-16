@@ -62,6 +62,7 @@ router.put("/:id", requireAuth, requireAdmin, async (req, res) => {
       warning: "prix_incoherent",
     });
   }
+  const avant = await prisma.article.findUnique({ where: { id: req.params.id } });
   const article = await prisma.article.update({
     where: { id: req.params.id },
     data: {
@@ -71,7 +72,33 @@ router.put("/:id", requireAuth, requireAdmin, async (req, res) => {
       ...(actif != null ? { actif } : {}),
     },
   });
+  if (avant && (prixAchat != null || prixVente != null) && (avant.prixAchat !== article.prixAchat || avant.prixVente !== article.prixVente)) {
+    await prisma.journalAudit.create({
+      data: {
+        utilisateurId: req.user.id,
+        action: "modification_prix_article",
+        cibleType: "Article",
+        cibleId: article.id,
+        details: `${article.designation} : achat ${avant.prixAchat}→${article.prixAchat} F, vente ${avant.prixVente}→${article.prixVente} F.`,
+      },
+    });
+  }
   res.json(article);
+});
+
+// PUT /api/articles/:id/seuil-alerte  { depotId, seuilAlerte }
+router.put("/:id/seuil-alerte", requireAuth, requireAdmin, async (req, res) => {
+  const { depotId, seuilAlerte } = req.body || {};
+  const seuil = Number(seuilAlerte);
+  if (!depotId || Number.isNaN(seuil) || seuil < 0) {
+    return res.status(400).json({ error: "Dépôt et seuil (nombre positif) requis." });
+  }
+  const stock = await prisma.stockItem.upsert({
+    where: { articleId_depotId: { articleId: req.params.id, depotId } },
+    update: { seuilAlerte: seuil },
+    create: { articleId: req.params.id, depotId, quantite: 0, seuilAlerte: seuil },
+  });
+  res.json(stock);
 });
 
 // POST /api/articles/:id/reappro  { depotId, quantite }

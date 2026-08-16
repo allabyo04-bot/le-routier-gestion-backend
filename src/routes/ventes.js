@@ -14,6 +14,13 @@ async function prochainNumero() {
   return "FV" + String(n).padStart(7, "0");
 }
 
+function nettoyerPaiements(paiements) {
+  if (!Array.isArray(paiements)) return [];
+  return paiements
+    .map((p) => ({ mode: String(p.mode || "").trim(), montant: Number(p.montant || 0) }))
+    .filter((p) => p.mode && p.montant > 0);
+}
+
 // GET /api/ventes?depotId=&caissierId=&date=&statut=  (un opérateur ne voit que ses propres ventes)
 router.get("/", requireAuth, async (req, res) => {
   const { depotId, date, statut } = req.query;
@@ -33,8 +40,23 @@ router.get("/", requireAuth, async (req, res) => {
   };
   const ventes = await prisma.vente.findMany({
     where,
-    include: { lignes: true, client: true, caissier: { select: { nom: true } }, depot: true },
+    include: { lignes: true, client: true, caissier: { select: { nom: true } }, depot: true, paiements: true },
     orderBy: { date: "desc" },
+  });
+  res.json(ventes);
+});
+
+// GET /api/ventes/creances — ventes validées avec un solde encore dû (vente à crédit), réservé à l'admin.
+router.get("/creances", requireAuth, requireAdmin, async (req, res) => {
+  const { clientId } = req.query;
+  const ventes = await prisma.vente.findMany({
+    where: {
+      statut: "Validee",
+      soldeDu: { gt: 0 },
+      ...(clientId ? { clientId } : {}),
+    },
+    include: { client: true, depot: true, paiements: true },
+    orderBy: { date: "asc" },
   });
   res.json(ventes);
 });
@@ -42,23 +64,22 @@ router.get("/", requireAuth, async (req, res) => {
 router.get("/:id", requireAuth, async (req, res) => {
   const vente = await prisma.vente.findUnique({
     where: { id: req.params.id },
-    include: { lignes: true, client: true, caissier: { select: { nom: true } }, depot: true },
+    include: { lignes: true, client: true, caissier: { select: { nom: true } }, depot: true, paiements: true },
   });
   if (!vente) return res.status(404).json({ error: "Vente introuvable." });
   res.json(vente);
 });
 
 // POST /api/ventes
-// { depotId, clientId?, lignes: [{ articleId, quantite, remise? }], remiseGlobale?, montantRecu? }
+// { depotId, clientId?, lignes: [{ articleId, quantite, remise? }], remiseGlobale?, paiements?: [{ mode, montant }] }
+// Si la somme des paiements est inférieure au total, la différence devient une créance (soldeDu) —
+// un client identifié (pas "Client comptoir") est alors obligatoire.
 router.post("/", requireAuth, async (req, res) => {
-  const { depotId, clientId, lignes, remiseGlobale, montantRecu } = req.body || {};
+  const { depotId, clientId, lignes, remiseGlobale, paiements } = req.body || {};
   if (!depotId || !Array.isArray(lignes) || lignes.length === 0) {
     return res.status(400).json({ error: "Dépôt et au moins une ligne d'article requis." });
   }
-  const recu = montantRecu === "" || montantRecu == null ? null : Number(montantRecu);
-  if (recu != null && Number.isNaN(recu)) {
-    return res.status(400).json({ error: "Montant reçu invalide." });
-  }
+  const paiementsPropres = nettoyerPaiements(paiements);
 
   try {
     const vente = await prisma.$transaction(async (tx) => {
@@ -93,10 +114,17 @@ router.post("/", requireAuth, async (req, res) => {
       }
       total -= Number(remiseGlobale || 0);
 
-      if (recu != null && recu < total) {
-        throw new Error(`Montant reçu insuffisant (total : ${total} F, reçu : ${recu} F).`);
+      const totalPaye = paiementsPropres.reduce((s, p) => s + p.montant, 0);
+      const soldeDu = Math.max(total - totalPaye, 0);
+      const monnaieRendue = Math.max(totalPaye - total, 0);
+
+      if (soldeDu > 0) {
+        if (!clientId) throw new Error("Un client identifié est requis pour une vente à crédit (solde non payé).");
+        const client = await tx.client.findUnique({ where: { id: clientId } });
+        if (!client || client.estClientComptoir) {
+          throw new Error("Le client comptoir ne peut pas avoir de vente à crédit — choisis ou crée un client identifié.");
+        }
       }
-      const monnaieRendue = recu != null ? recu - total : null;
 
       const venteCreee = await tx.vente.create({
         data: {
@@ -107,11 +135,12 @@ router.post("/", requireAuth, async (req, res) => {
           statut: "Validee",
           total,
           remiseGlobale: Number(remiseGlobale || 0),
-          montantRecu: recu,
           monnaieRendue,
+          soldeDu,
           lignes: { create: lignesData },
+          paiements: { create: paiementsPropres },
         },
-        include: { lignes: true },
+        include: { lignes: true, paiements: true },
       });
 
       // Décrément du stock + mouvement, ligne par ligne
@@ -139,6 +168,38 @@ router.post("/", requireAuth, async (req, res) => {
   } catch (e) {
     res.status(400).json({ error: e.message || "Erreur lors de l'enregistrement de la vente." });
   }
+});
+
+// POST /api/ventes/:id/reglement — encaisse un règlement ultérieur sur une vente à crédit.
+// { paiements: [{ mode, montant }] }
+router.post("/:id/reglement", requireAuth, async (req, res) => {
+  const paiementsPropres = nettoyerPaiements(req.body?.paiements);
+  if (!paiementsPropres.length) return res.status(400).json({ error: "Au moins un paiement requis." });
+
+  const vente = await prisma.vente.findUnique({ where: { id: req.params.id } });
+  if (!vente) return res.status(404).json({ error: "Vente introuvable." });
+  if (vente.statut !== "Validee") return res.status(400).json({ error: "Cette vente n'est plus active." });
+  if (vente.soldeDu <= 0) return res.status(400).json({ error: "Cette vente n'a plus de solde dû." });
+
+  const totalReglement = paiementsPropres.reduce((s, p) => s + p.montant, 0);
+  const nouveauSolde = Math.max(vente.soldeDu - totalReglement, 0);
+  const excedent = Math.max(totalReglement - vente.soldeDu, 0);
+
+  const venteMaj = await prisma.$transaction(async (tx) => {
+    await tx.paiement.createMany({
+      data: paiementsPropres.map((p) => ({ venteId: vente.id, mode: p.mode, montant: p.montant, viaReglement: true })),
+    });
+    return tx.vente.update({
+      where: { id: vente.id },
+      data: {
+        soldeDu: nouveauSolde,
+        monnaieRendue: vente.monnaieRendue + excedent,
+      },
+      include: { paiements: true, client: true },
+    });
+  });
+
+  res.json(venteMaj);
 });
 
 // DELETE /api/ventes/:id — réservé à l'administrateur. Ne supprime jamais physiquement :
