@@ -49,11 +49,15 @@ router.get("/:id", requireAuth, async (req, res) => {
 });
 
 // POST /api/ventes
-// { depotId, clientId?, lignes: [{ articleId, quantite, remise? }], remiseGlobale? }
+// { depotId, clientId?, lignes: [{ articleId, quantite, remise? }], remiseGlobale?, montantRecu? }
 router.post("/", requireAuth, async (req, res) => {
-  const { depotId, clientId, lignes, remiseGlobale } = req.body || {};
+  const { depotId, clientId, lignes, remiseGlobale, montantRecu } = req.body || {};
   if (!depotId || !Array.isArray(lignes) || lignes.length === 0) {
     return res.status(400).json({ error: "Dépôt et au moins une ligne d'article requis." });
+  }
+  const recu = montantRecu === "" || montantRecu == null ? null : Number(montantRecu);
+  if (recu != null && Number.isNaN(recu)) {
+    return res.status(400).json({ error: "Montant reçu invalide." });
   }
 
   try {
@@ -89,6 +93,11 @@ router.post("/", requireAuth, async (req, res) => {
       }
       total -= Number(remiseGlobale || 0);
 
+      if (recu != null && recu < total) {
+        throw new Error(`Montant reçu insuffisant (total : ${total} F, reçu : ${recu} F).`);
+      }
+      const monnaieRendue = recu != null ? recu - total : null;
+
       const venteCreee = await tx.vente.create({
         data: {
           numero,
@@ -98,6 +107,8 @@ router.post("/", requireAuth, async (req, res) => {
           statut: "Validee",
           total,
           remiseGlobale: Number(remiseGlobale || 0),
+          montantRecu: recu,
+          monnaieRendue,
           lignes: { create: lignesData },
         },
         include: { lignes: true },

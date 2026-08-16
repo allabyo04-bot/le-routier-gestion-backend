@@ -11,6 +11,7 @@ const ventesRoutes = require("./routes/ventes");
 const ventesAttenteRoutes = require("./routes/ventes-attente");
 const operationsCaisseRoutes = require("./routes/operations-caisse");
 const etatsRoutes = require("./routes/etats");
+const mouvementsStockRoutes = require("./routes/mouvements-stock");
 
 const app = express();
 app.use(cors());
@@ -27,6 +28,7 @@ app.use("/api/ventes", ventesRoutes);
 app.use("/api/ventes-attente", ventesAttenteRoutes);
 app.use("/api/operations-caisse", operationsCaisseRoutes);
 app.use("/api/etats", etatsRoutes);
+app.use("/api/mouvements-stock", mouvementsStockRoutes);
 
 // Gestionnaire d'erreurs générique — évite qu'une exception non gérée ne fasse planter le process
 app.use((err, req, res, next) => {

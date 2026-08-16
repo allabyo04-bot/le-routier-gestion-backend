@@ -96,6 +96,8 @@ model Vente {
   typeFacture     String   @default("NonNormalisee") // "NonNormalisee" | "Normalisee" (phase DGI, plus tard)
   total           Int      @default(0)
   remiseGlobale   Int      @default(0)
+  montantRecu     Int?     // somme remise par le client en caisse (facultatif : vente à crédit si absent)
+  monnaieRendue   Int?     // montantRecu - total, calculé et figé au moment de la vente
   motifAnnulation String?
   annuleeParId    String?
   annuleePar      User?    @relation("ventesAnnulees", fields: [annuleeParId], references: [id])
