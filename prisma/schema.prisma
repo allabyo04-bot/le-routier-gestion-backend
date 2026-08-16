@@ -97,7 +97,7 @@ model Vente {
   total           Int      @default(0)
   remiseGlobale   Int      @default(0)
   paiements       Paiement[]
-  monnaieRendue   Int      @default(0) // somme reçue au-delà du total, rendue au client
+  monnaieRendue   Int?     // somme reçue au-delà du total, rendue au client
   soldeDu         Int      @default(0) // reste à payer si vente à crédit (0 si payée intégralement)
   motifAnnulation String?
   annuleeParId    String?
